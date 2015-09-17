@@ -1,100 +1,132 @@
 import os
-import argparse
-import shutil
-import calendar
 import sys
+import argparse
+import calendar
+import shutil
 import filecmp
-from os import path
-from os.path import abspath
-from time import localtime
-from pathlib import Path, PurePath
- 
-def args_parser():
-    '''defines and returns the command line arguments for this script'''
-    ap = argparse.ArgumentParser(description = 'Organizes pictures from '
-            'source folder to destination folder by moving (or copying) '
-            'files into subfolders arranged by year & month.')
-    ap.add_argument('source', help='the folder to move files from')                             
-    ap.add_argument('destination', help='the folder where files will be '
-            'organized by year and month')
-    ap.add_argument('-c', '--copy', help='just copy the files instead '
-            'of moving them from the source', action='store_true')
-    ap.add_argument('-s', '--silent', help='do not print progress or '
-            'activity; prompts will NOT be suppressed however', 
-            action='store_true')
-    ap.add_argument('-np', '--noprompt', action='store_true', 
-            help='just do it, don\'t prompt for y/n')
-    return ap
-    
-def get_new_name(p: PurePath):
-    '''returns a new file name by appending (1) to the existing
-    file name. process is applied repeatedly until the file name 
-    is unique'''
-    p = p.parent.joinpath(p.stem + ' (1) ' + p.suffix)
-    while path.exists(str(p)):
-        p = p.parent.joinpath(p.stem + ' (1) ' + p.suffix)
-    return p
+import time
+import glob
 
-def transform(s: PurePath, d: PurePath):
-    '''moves or copies source (s) to destination (d). return 2-tuple
-    containing (1, 0) or (0, 1) if copied or skipped respectively'''
-    if not path.exists(str(d.parent)):
-        # need to create this folder
-        print('Creating folder %s' % d.parent)
-        os.makedirs(str(d.parent))
-    else:
-        # name exists? compare for duplicate and skip if it is. 
-        # otherwise, get a new name for the file
-        if path.exists(str(d)):
-            # compare for equality 
-            if filecmp.cmp(str(s), str(d), shallow=False):
-                print('Skipping duplicate file \'%s\'' % d)
-                # 0 copied, 1 skipped
-                return (0, 1)
-            else:
-                d = get_new_name(d)
-                print('File name already exists; generating new name!')
-    print('Copying %s to %s' % (s, d))
-    shutil.copy2(str(s), str(d))
-    # 1 copied, 0 skipped
-    return (1, 0)
-        
-def main():
-    '''move or copy all files from source to destination'''
-    args = args_parser().parse_args()
-    # TODO: support optional arguments.
+def args_parser():
+    '''defines and returns the command line arguments for this script'''    
+    ap = argparse.ArgumentParser(description = 'Organizes pictures from '
+            'source folder to destination folder by copying (or moving) '
+            'files into subfolders arranged by year & month.')
+    # required parameters
+    ap.add_argument('source', help='the folder (and subfolders inside it) '
+            'that will be scanned for files that need to be arranged.')
+    ap.add_argument('destination', 
+            help='the folder where files will be organized (i.e., '
+            'copied or moved to) inside subfolders arranged by year '
+            'and month.')
+    # the following are optional parameters
+    ap.add_argument('-m', '--move', action='store_true',
+            help='move the files from the source folder to the '
+            'destination folder. The default operation is to copy '
+            'files from the source to the destination folder, i.e., '
+            'leaves the contents of the source folder intact.')
+    ap.add_argument('-np', '--noprompt', action='store_true', 
+            help='just do it, don\'t prompt for y/n') 
+    # ap.add_argument('-s', '--startdate', type=valid_date,
+            # help='process files starting from date') 
+    return ap
+
+def destination_subfolder(stat):
+    '''Creates a subfolder using creation time and modified time.
+       Sub folder is in the format:
+         year\month number - abbr. month name\
+         
+       Example: 
+         2014\4 - Apr\
+         2015\1 - Jan\ '''
+    file_time = time.localtime(min(stat.st_ctime, stat.st_mtime))
+    subfolder = '%s\%s - %s\\' % (file_time.tm_year, 
+                file_time.tm_mon, calendar.month_name[file_time.tm_mon][:3])
+    return subfolder
+
+def get_unique_filename(f):
+    '''Creates a unique file name from the filename provided in 
+       the parameter. 
+       
+       Unique name is created by appending numbers to the end of 
+       the file name and checking via os calls for existance of 
+       file with the same name.'''
+    root, ext = os.path.splitext(f)
+    for i in range(1, 100000):
+        if not os.path.exists('%s (%s) %s' % (root, i, ext)):
+            return '%s (%s) %s' % (root, i, ext)
+    return None
     
-    # validate passed in source and destination folders
-    s_folder = abspath(args.source)
-    d_folder = abspath(args.destination)
-    for folder in [s_folder, d_folder]:
-        if not path.isdir(folder):
-            print('Folder \'%s\' is invalid or does not exists!' % folder)
-            sys.exit(4)
-    if s_folder == d_folder:
+def main():
+    '''Organizes pictures by year and month by copying from 
+       source to destination folder.'''
+    args = args_parser().parse_args()
+    dest_root_folder = os.path.abspath(args.destination) + os.sep
+    source_folder = os.path.abspath(args.source) + os.sep
+    # validate source and destination folders
+    if source_folder == dest_root_folder:
         print('Source and destination folders cannot be the same!')
         sys.exit(4)
- 
-    # iterate over all files
-    skipped, copied = (0, 0)
-    name_stat_pairs = ((str(p), p.stat()) 
-                       for p in Path(s_folder).glob('**/*') if p.is_file())
-    # min of modified and creation time is used because the act of 
-    # copying files to a new folder will change the file creation 
-    # time. the modified time seems to not get affected, however.
-    name_time_pairs = ((PurePath(abspath(f)), localtime(min(s.st_ctime, s.st_mtime)))
-                       for f, s in name_stat_pairs)
-    for s_file, file_time in name_time_pairs:
-        # the creation time is used to build the final destination of the file
-        d_subfolder = '%s\%s - %s\\' % (file_time.tm_year, file_time.tm_mon, 
-                 calendar.month_name[file_time.tm_mon][:3])
-        d_file = PurePath(d_folder).joinpath(
-                d_subfolder, s_file.name)
-        c, s = transform(s_file, d_file)
-        copied += c
-        skipped += s
+    for folder in [source_folder, dest_root_folder]:
+        if not os.path.exists(folder):
+            print('Folder \'%s\' is invalid or does not exists!' % folder)
+            sys.exit(4)
+            
+    prompt = not args.noprompt
+    skipped, operated = 0, 0
+    skipped_folders = []
+    dest = None
+    
+    # final prompt before damage
+    if prompt and input("Copying files from '%s' to '%s'. Proceed [y|n]? " %
+                        (source_folder, dest_root_folder)) == 'n':
+        sys.exit(0)
+    
+    print('Scanning folder \'%s\'\n' % source_folder)
+    source_files = ((f, os.stat(f)) 
+                    for f in glob.iglob(source_folder + '**/*', recursive=True) 
+                    if os.path.isfile(f))
+    for src, stat in source_files:
+        dest_folder = dest_root_folder + destination_subfolder(stat)
+        if dest_folder in skipped_folders:
+            print('Skipping file \'%s\'' % src)
+            skipped += 1
+            continue
+        if not os.path.exists(dest_folder):
+            # the destination folder doesn't exist (so the file 
+            # doesn't exist either). Create the destination or
+            # skip creating it and hence skip the file.
+            #
+            # no prompt (or silent run) means we create destination folders
+            if prompt:
+                if input('Create folder \'%s\' [y|n]? ' % dest_folder) == 'n':
+                    print('Skipping file \'%s\'' % src)
+                    skipped_folders.append(dest_folder)
+                    skipped += 1
+                    continue
+            print('Creating destination folder %s' % dest_folder)
+            # todo: 
+            os.makedirs(dest_folder)
+            dest = dest_folder + os.path.basename(src)
+        else:
+            # the destination directory exists; does the file?
+            dest = dest_folder + os.path.basename(src)
+            if os.path.exists(dest):
+                # compare for equality 
+                if filecmp.cmp(src, dest, shallow=False):
+                    print('Skipping file \'%s\' as duplicate exists '
+                          'at \'%s\'' % (src, dest))
+                    skipped += 1
+                    continue
+                else:
+                    print('File name already exists; generating new name!')
+                    dest = get_unique_filename(dest)
+        print('Copying %s to %s' % (src, dest))
+        # todo: 
+        shutil.copy2(src, dest)
+        operated += 1
     print('%s file(s) total; %s copied; %s skipped' % 
-            (copied + skipped, copied, skipped))
+          (operated + skipped, operated, skipped))
     
 if __name__ == '__main__':
     main()
