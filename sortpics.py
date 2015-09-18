@@ -69,7 +69,7 @@ def main():
         sys.exit(4)
     for folder in [source_folder, dest_root_folder]:
         if not os.path.exists(folder):
-            print('Folder \'%s\' is invalid or does not exists!' % folder)
+            print("Folder '%s' is invalid or does not exists!" % folder)
             sys.exit(4)
             
     prompt = not args.noprompt
@@ -78,18 +78,18 @@ def main():
     dest = None
     
     # final prompt before damage
-    if prompt and input("Copying files from '%s' to '%s'. Proceed [y|n]? " %
+    if prompt and input("Organize files from '%s' to '%s'. Proceed [y|n]? " %
                         (source_folder, dest_root_folder)) == 'n':
         sys.exit(0)
     
-    print('Scanning folder \'%s\'\n' % source_folder)
+    print('\nScanning folder \'%s\'\n' % source_folder)
     source_files = ((f, os.stat(f)) 
                     for f in glob.iglob(source_folder + '**/*', recursive=True) 
                     if os.path.isfile(f))
     for src, stat in source_files:
         dest_folder = dest_root_folder + destination_subfolder(stat)
         if dest_folder in skipped_folders:
-            print('Skipping file \'%s\'' % src)
+            print("Skipping file '%s'" % src)
             skipped += 1
             continue
         if not os.path.exists(dest_folder):
@@ -99,33 +99,41 @@ def main():
             #
             # no prompt (or silent run) means we create destination folders
             if prompt:
-                if input('Create folder \'%s\' [y|n]? ' % dest_folder) == 'n':
-                    print('Skipping file \'%s\'' % src)
+                if input("Create folder '%s' [y|n]? " % dest_folder) == 'n':
+                    print("Skipping '%s'" % src)
                     skipped_folders.append(dest_folder)
                     skipped += 1
                     continue
             print('Creating destination folder %s' % dest_folder)
-            # todo: 
             os.makedirs(dest_folder)
             dest = dest_folder + os.path.basename(src)
         else:
             # the destination directory exists; does the file?
+            found_duplicate = False
+            gen = (i for i in range(1, 10000))
             dest = dest_folder + os.path.basename(src)
-            if os.path.exists(dest):
-                # compare for equality 
+            while os.path.exists(dest):
+                print("File '%s' already exists at '%s'. Comparing..." % 
+                      (src, dest), end='\n')
                 if filecmp.cmp(src, dest, shallow=False):
-                    print('Skipping file \'%s\' as duplicate exists '
-                          'at \'%s\'' % (src, dest))
+                    print('Are equal; skipping!')
                     skipped += 1
-                    continue
+                    # break out of first loop; continue from the
+                    # top of second loop (as we are skipping).
+                    found_duplicate = True
+                    break;
                 else:
-                    print('File name already exists; generating new name!')
-                    dest = get_unique_filename(dest)
-        print('Copying %s to %s' % (src, dest))
-        # todo: 
+                    # get a new destination name and try again
+                    print('Are different; generating new name')
+                    root, ext = os.path.splitext(dest_folder + os.path.basename(src))
+                    dest = '%s (%s)%s' % (root, gen.__next__(), ext)
+            if found_duplicate:
+                continue;
+        print("Copying '%s' to '%s' ... " % (src, dest), end='')
         shutil.copy2(src, dest)
+        print('Done!')
         operated += 1
-    print('%s file(s) total; %s copied; %s skipped' % 
+    print('\n%s file(s) total; %s copied; %s skipped' % 
           (operated + skipped, operated, skipped))
     
 if __name__ == '__main__':
